@@ -42,7 +42,7 @@ for more information about XLSR-Wav2Vec2 fine-tuning.
 This model was shown significant results in many low-resources languages. You
 can see the [competition board](https://paperswithcode.com/dataset/common-voice)
 or even testing the models from the [HuggingFace
-hub](https://huggingface.co/models?filter=xlsr-fine-tuning-week). 
+hub](https://huggingface.co/models?filter=xlsr-fine-tuning-week).
 
 
 In this notebook, we will go through how to use this model to recognize the
@@ -51,7 +51,7 @@ every classification problem). Before going any further, we need to install some
 handy packages and define some enviroment values.
 """
 
-# Download the dataset from 
+# Download the dataset from
 import os
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"]="1"
@@ -90,6 +90,7 @@ from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
 from datasets import load_dataset, load_metric
 
+import shutil
 
 # import sys
 
@@ -98,7 +99,7 @@ from datasets import load_dataset, load_metric
 # for path in tqdm(Path("content/data/aesdd").glob("**/*.wav")):
 #     name = str(path).split('/')[-1].split('.')[0]
 #     label = str(path).split('/')[-2]
-    
+
 #     try:
 #         # There are some broken files
 #         s = torchaudio.load(path)
@@ -130,7 +131,7 @@ from datasets import load_dataset, load_metric
 # df = df.reset_index(drop=True)
 # df.head()
 
-# """Let's explore how many labels (emotions) are in the dataset with what 
+# """Let's explore how many labels (emotions) are in the dataset with what
 # distribution."""
 
 # print("Labels: ", df["emotion"].unique())
@@ -138,20 +139,20 @@ from datasets import load_dataset, load_metric
 # df.groupby("emotion").count()[["path"]]
 
 
-"""For training purposes, we need to split data into train test sets; in this 
+"""For training purposes, we need to split data into train test sets; in this
 specific example, we break with a `20%` rate for the test set."""
 
 # save_path = "content/data"
 
-# train_df, test_df = train_test_split(df, 
+# train_df, test_df = train_test_split(df,
 #     test_size=0.2, random_state=101, stratify=df["emotion"])
 
 # train_df = train_df.reset_index(drop=True)
 # test_df = test_df.reset_index(drop=True)
 
-# train_df.to_csv(f"{save_path}/train.csv", sep="\t", 
+# train_df.to_csv(f"{save_path}/train.csv", sep="\t",
 #                 encoding="utf-8", index=False)
-# test_df.to_csv(f"{save_path}/test.csv", sep="\t", 
+# test_df.to_csv(f"{save_path}/test.csv", sep="\t",
 #                encoding="utf-8", index=False)
 
 
@@ -162,7 +163,7 @@ specific example, we break with a `20%` rate for the test set."""
 
 # Loading the created dataset using datasets
 data_files = {
-    "train": "content/data/train.csv", 
+    "train": "content/data/train.csv",
     "validation": "content/data/test.csv",
 }
 
@@ -211,8 +212,8 @@ config = AutoConfig.from_pretrained(
 )
 setattr(config, 'pooling_mode', pooling_mode)
 
-processor = Wav2Vec2Processor.from_pretrained(model_name_or_path,)
-target_sampling_rate = processor.feature_extractor.sampling_rate
+feature_extractor = Wav2Vec2Processor.from_pretrained(model_name_or_path,)
+target_sampling_rate = feature_extractor.feature_extractor.sampling_rate
 print(f"The target sampling rate: {target_sampling_rate}")
 
 """# Preprocess Data
@@ -240,7 +241,7 @@ even **multi-label classification**.
 
 def speech_file_to_array_fn(path):
     speech_array, sampling_rate = torchaudio.load(path)
-    resampler = torchaudio.transforms.Resample(sampling_rate, 
+    resampler = torchaudio.transforms.Resample(sampling_rate,
             target_sampling_rate)
     speech = resampler(speech_array).squeeze().numpy()
     return speech
@@ -260,7 +261,7 @@ def preprocess_function(examples):
     target_list = [label_to_id(
         label, label_list) for label in examples[output_column]]
 
-    result = processor(speech_list, sampling_rate=target_sampling_rate)
+    result = feature_extractor(speech_list, sampling_rate=target_sampling_rate)
     result["labels"] = list(target_list)
 
     return result
@@ -286,7 +287,7 @@ eval_dataset = eval_dataset.map(
 # print(f"Training attention_mask: {train_dataset[idx]['attention_mask']}")
 # print(f"Training labels: {train_dataset[idx]['labels']} - {train_dataset[idx]['emotion']}")
 
-"""Great, now we've successfully read all the audio files, resampled the audio 
+"""Great, now we've successfully read all the audio files, resampled the audio
 files to 16kHz, and mapped each audio to the corresponding label.
 
 ## Model
@@ -472,7 +473,7 @@ class DataCollatorCTCWithPadding:
             7.5 (Volta).
     """
 
-    processor: Wav2Vec2Processor
+    feature_extractor: Wav2Vec2Processor
     padding: Union[bool, str] = True
     max_length: Optional[int] = None
     max_length_labels: Optional[int] = None
@@ -484,10 +485,10 @@ class DataCollatorCTCWithPadding:
             {"input_values": feature["input_values"]} for feature in features]
         label_features = [feature["labels"] for feature in features]
 
-        d_type = torch.long if isinstance(label_features[0], 
+        d_type = torch.long if isinstance(label_features[0],
                     int) else torch.float
 
-        batch = self.processor.pad(
+        batch = self.feature_extractor.pad(
             input_features,
             padding=self.padding,
             max_length=self.max_length,
@@ -499,7 +500,8 @@ class DataCollatorCTCWithPadding:
 
         return batch
 
-data_collator = DataCollatorCTCWithPadding(processor=processor, padding=True)
+data_collator = DataCollatorCTCWithPadding(feature_extractor=feature_extractor,
+                                           padding=True)
 
 """Next, the evaluation metric is defined. There are many pre-defined metrics
 for classification/regression problems, but in this case, we would continue with
@@ -510,20 +512,37 @@ is_regression = False
 
 
 def compute_metrics(p: EvalPrediction):
-    preds = p.predictions[0] if isinstance(p.predictions, 
+    preds = p.predictions[0] if isinstance(p.predictions,
                 tuple) else p.predictions
     preds = np.squeeze(preds) if is_regression else np.argmax(preds, axis=1)
 
     if is_regression:
         return {"mse": ((preds - p.label_ids) ** 2).mean().item()}
     else:
-        return {"accuracy": (preds == 
+        return {"accuracy": (preds ==
                     p.label_ids).astype(np.float32).mean().item()}
 
 """Now, we can load the pretrained XLSR-Wav2Vec2 checkpoint into our
 classification model with a pooling strategy."""
 
-model = Wav2Vec2ForSpeechClassification.from_pretrained(
+drive_dir = "content"
+output_dir = os.path.join(drive_dir, "ckpts", "hubert-base-greek-ser")
+
+last_checkpoint = None
+checkpoints = []
+if os.path.exists(output_dir):
+    for subdir in os.scandir(output_dir):
+        if subdir.is_dir():
+            checkpoints.append(subdir.path)
+
+
+if len(checkpoints) > 0:
+    checkpoints = list(sorted(checkpoints, key=lambda ckpt: ckpt.split('/')[-1].split('-')[-1], reverse=True))
+    model_name_or_path = os.path.join("/content", checkpoints[0].split("/")[-1])
+    last_checkpoint = model_name_or_path
+    shutil.copytree(checkpoints[0], model_name_or_path)
+
+model = HubertForSpeechClassification.from_pretrained(
     model_name_or_path,
     config=config,
 )
@@ -648,13 +667,13 @@ trainer = CTCTrainer(
     compute_metrics=compute_metrics,
     train_dataset=train_dataset,
     eval_dataset=eval_dataset,
-    tokenizer=processor.feature_extractor,
+    tokenizer=feature_extractor,
 )
 
 """### Training
 
 Training will take between 10 and 60 minutes depending on the GPU allocated to
-this notebook. 
+this notebook.
 
 In case you want to use this google colab to fine-tune your model, you should
 make sure that your training doesn't stop due to inactivity. A simple hack to
@@ -678,40 +697,41 @@ Let's first load the pretrained checkpoint.
 
 
 
-test_dataset = load_dataset("csv", 
+test_dataset = load_dataset("csv",
         data_files={"test": "content/data/test.csv"}, delimiter="\t")["test"]
 test_dataset
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}")
 
-model_name_or_path = "m3hrdadfi/wav2vec2-xlsr-greek-speech-emotion-recognition"
+model_name_or_path = "m3hrdadfi/hubert-base-greek-speech-emotion-recognition"
 config = AutoConfig.from_pretrained(model_name_or_path)
-processor = Wav2Vec2Processor.from_pretrained(model_name_or_path)
-model = Wav2Vec2ForSpeechClassification.from_pretrained(
-        model_name_or_path).to(device)
+feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(
+    model_name_or_path)
+model = HubertForSpeechClassification.from_pretrained(
+    model_name_or_path).to(device)
 
 
 def speech_file_to_array_fn(batch):
     speech_array, sampling_rate = torchaudio.load(batch["path"])
     speech_array = speech_array.squeeze().numpy()
-    speech_array = librosa.resample(np.asarray(speech_array), 
-            sampling_rate, processor.feature_extractor.sampling_rate)
+    speech_array = librosa.resample(np.asarray(speech_array),
+            sampling_rate, feature_extractor.sampling_rate)
 
     batch["speech"] = speech_array
     return batch
 
 
 def predict(batch):
-    features = processor(batch["speech"], 
-            sampling_rate=processor.feature_extractor.sampling_rate, 
+    features = feature_extractor(batch["speech"],
+            sampling_rate=feature_extractor.sampling_rate,
             return_tensors="pt", padding=True)
 
     input_values = features.input_values.to(device)
     attention_mask = features.attention_mask.to(device)
 
     with torch.no_grad():
-        logits = model(input_values, attention_mask=attention_mask).logits 
+        logits = model(input_values, attention_mask=attention_mask).logits
 
     pred_ids = torch.argmax(logits, dim=-1).detach().cpu().numpy()
     batch["predicted"] = pred_ids
