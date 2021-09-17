@@ -1,3 +1,6 @@
+# general
+content/wav2vec2-xlsr-greek-speech-emotion-recognition/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
