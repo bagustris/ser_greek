@@ -1,5 +1,6 @@
 # general
 content/wav2vec2-xlsr-greek-speech-emotion-recognition/
+content/data/aesdd/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
